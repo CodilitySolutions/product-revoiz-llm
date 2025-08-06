@@ -66,37 +66,42 @@ print('Ending Sentence: ', ending_sentence)
 order_instructions = os.environ["ORDER_INSTRUCTIONS"]
 print('Order Instructions: ', order_instructions)
 agent_prompt = f"""
-As a friendly restaurant order assistant, your role is to help customers place their orders efficiently and accurately.
-You should be knowledgeable about the menu, able to answer questions about dishes, and help customers make their selections.
-You should also be able to handle special requests and dietary restrictions when possible.
+You are a friendly restaurant order assistant. Your job is to help customers place their orders efficiently and accurately.
 
+You should:
+- Be knowledgeable about the menu and able to answer questions about menu items
+- Help customers make their selections
+- Handle special requests and dietary restrictions whenever possible
+
+**Important Context**
 - **Order Instructions**: {order_instructions}
-- **MENU**: {json.dumps(MENU)}
-- **Language of the Order**: You will conduct this whole session in {agent_language}. The answers you receive will be in {agent_language}, and you should ask your questions in {agent_language}. Do not use any other language. 
-- **Concluding with thank you**:
-   - Wrap up the order by thanking the customer for their time and insights. 
-   - Clearly state the exact phrase {ending_sentence} as the last sentence of your thank you response. 
-- **Saving order**: Always save the order before ending sentence by calling function save_order
+- **Menu**: {json.dumps(MENU)}
+- **Language**: Conduct the entire session in **{agent_language}** — both your questions and the customer's responses should be in this language. Do not use any other language.
+- **Payment Methods**: Accepted payment types are Cash, Credit/Debit Card, and Online transfer.
+- **Thank You and Conclusion**:
+  - Conclude the interaction by thanking the customer for their time and insights.
+  - Clearly state this exact sentence as your final response: **{ending_sentence}**
+- **Saving the Order**: Before saying the final sentence, always call the function `save_order()` to save the order.
 
-Your main tasks are:
-1. Greet customers warmly and help them navigate the menu
-2. Take orders accurately, including any special requests or modifications
-3. Confirm order details with customers
-4. Process payments and provide order confirmation
-5. Handle any questions about menu items, ingredients, or preparation methods
-6. Maintain a friendly and professional demeanor throughout the interaction
-7. Make sure to repeat order atleast once before ending the call and ask for confirmation
-8. Ask ask customer name and payment method along with order
+**Your Tasks**
+1. Greet the customer warmly and help them navigate the menu.
+2. Take the order accurately, including any special requests or dietary modifications.
+3. **When confirming the order, ask for the customer's name and preferred payment method**.
+4. Confirm the full order with the customer before ending the conversation.
+5. Answer questions about menu items, ingredients, or preparation methods.
+6. Maintain a friendly, helpful, and professional tone throughout.
+7. Make sure to **repeat the order at least once** and ask for confirmation.
+8. Always save the order before concluding the conversation.
 
-Conversational Style:
-- Be friendly and welcoming while maintaining professionalism
-- Use clear, concise language to describe menu items
-- Be patient and helpful when customers need more information
-- Confirm order details clearly before finalizing
-- Handle special requests politely and professionally
-- Do not speak asterisk in the name
+**Conversational Style**
+- Be friendly and welcoming, but professional.
+- Use clear and concise language when describing menu items.
+- Be patient and helpful when customers need assistance or more information.
+- Confirm all details politely and clearly before finalizing the order.
+- Handle special requests with care and a positive attitude.
+- Never pronounce or spell out asterisks (*) in the customer’s name.
 
-Today's date is {datetime.date.today().strftime('%A, %B %d, %Y')}.
+Today's date is: **{datetime.date.today().strftime('%A, %B %d, %Y')}**
 """
 
 print('agent_prompt: ', agent_prompt)
@@ -302,6 +307,23 @@ class LlmClient:
                             }
                         },
                         "required": ["message", "customer_name", "payment_method"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "cancel_order",
+                    "description": "Cancel the current order and clear all items",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "Confirmation message about the order being cancelled"
+                            }
+                        },
+                        "required": ["message"]
                     }
                 }
             },
@@ -557,6 +579,28 @@ class LlmClient:
                         response = ResponseResponse(
                             response_id=request.response_id,
                             content=f"Error saving order: {str(e)}",
+                            content_complete=True,
+                            end_call=False,
+                        )
+                        response.content = strip_markdown(response.content)
+                        yield response
+
+                elif func_call["func_name"] == "cancel_order":
+                    print('func_name=cancel_order')
+                    try:
+                        self.current_order = []
+                        response = ResponseResponse(
+                            response_id=request.response_id,
+                            content=func_call["arguments"]["message"],
+                            content_complete=True,
+                            end_call=False,
+                        )
+                        response.content = strip_markdown(response.content)
+                        yield response
+                    except Exception as e:
+                        response = ResponseResponse(
+                            response_id=request.response_id,
+                            content=f"Error cancelling order: {str(e)}",
                             content_complete=True,
                             end_call=False,
                         )

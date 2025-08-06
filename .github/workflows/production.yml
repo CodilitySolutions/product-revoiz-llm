@@ -1,0 +1,32 @@
+name: Docker for production
+on:
+  push:
+    branches: [ "prod" ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create a tag in environment
+      shell: bash
+      run:
+        echo "MY_TAG=$(date +'%Y%U')" >> $GITHUB_ENV
+    - uses: actions/checkout@v4
+    - name: Docker Login
+      uses: docker/login-action@v3
+      with:
+        username: ${{secrets.DOCKER_USER}}
+        password: ${{secrets.DOCKER_PASSWORD}}
+    - name: Docker Build and Push
+      env:
+        REPO: ${{secrets.DOCKER_REPO}}
+      run: |
+        docker build --compress=true --force-rm=true -f Dockerfile.prod -t "${REPO}:llm" --push --build-arg FORMATTED_TAG=${{env.MY_TAG}} .
+    - name: Docker Pull and Run
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{secrets.PRODUCTION_HOST}}
+        username: ubuntu
+        key: ${{secrets.ACTION_PRIVATE_KEY}}
+        envs: GITHUB_SHA
+        script: |
+          /bin/sh /home/ubuntu/revoiz/pull-llm.sh
