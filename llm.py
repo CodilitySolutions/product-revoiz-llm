@@ -25,25 +25,25 @@ language_codes = {
 }
 
 beginning_translations = {
-    "en-US": "Hey there, Thank you for taking the time for this interview. Are you ready to begin?",
-    "en-IN": "Hey there, Thank you for taking the time for this interview. Are you ready to begin?",
-    "en-GB": "Hey there, Thank you for taking the time for this interview. Are you ready to begin?",
-    "de-DE": "Hallo, Vielen Dank, dass Sie sich die Zeit für dieses Interview nehmen. Sind Sie bereit, zu beginnen?",
-    "es-ES": "Hola, Gracias por tomarte el tiempo para esta entrevista. ¿Estás listo para empezar?",
-    "es-419": "Hola, Gracias por tomarte el tiempo para esta entrevista. ¿Estás listo para empezar?",
-    "hi-IN": "नमस्ते, इस साक्षात्कार के लिए समय निकालने के लिए धन्यवाद। क्या आप शुरू करने के लिए तैयार हैं?",
-    "ja-JP": "こんにちは、このインタビューの時間を割いていただきありがとうございます。 始める準備はできましたか？",
-    "pt-PT": "Olá, Obrigado por dedicar um tempo para esta entrevista. Está pronto para começar?",
-    "pt-BR": "Olá, Obrigado por dedicar um tempo para esta entrevista. Está pronto para começar?",
-    "fr-FR": "Bonjour, Merci d'avoir pris le temps pour cette interview. Êtes-vous prêt à commencer?",
-    "zh-CN": "你好，谢谢你抽出时间接受这次采访。你准备好开始了吗？",
-    "ru-RU": "Привет, спасибо, что нашли время для этого интервью. Вы готовы начать?",
-    "it-IT":"Ciao, grazie per aver dedicato del tempo a questa intervista. Sei pronto per iniziare?",
-    "ko-KR":"안녕하세요, 인터뷰 시간을 내주셔서 감사합니다. 준비 되셨나요?",
-    "nl-NL":"Hallo daar, bedankt dat je de tijd neemt voor dit interview. Ben je klaar om te beginnen?",
-    "pl-PL": "Cześć, dziękuję, że znalazłeś czas na ten wywiad. Czy jesteś gotowy, żeby zacząć?",
-    "tr-TR": "Merhaba, bu röportaj için zaman ayırdığınız için teşekkür ederim. Başlamaya hazır mısınız?",
-    "vi-VN":"Chào bạn, cảm ơn bạn đã dành thời gian cho cuộc phỏng vấn này. Bạn đã sẵn sàng bắt đầu chưa?"
+    "en-US": "Welcome, Thank you for being here. What do you want to order?",
+    "en-IN": "Welcome, Thank you for being here. What do you want to order?",
+    "en-GB": "Welcome, Thank you for being here. What do you want to order?",
+    "de-DE": "Willkommen, danke, dass du hier bist. Was möchtest du bestellen?",
+    "es-ES": "Bienvenido, gracias por estar aquí. ¿Qué te gustaría pedir?",
+    "es-419": "Bienvenido, gracias por estar aquí. ¿Qué te gustaría pedir?",
+    "hi-IN": "स्वागत है, यहाँ आने के लिए धन्यवाद। आप क्या ऑर्डर करना चाहेंगे?",
+    "ja-JP": "ようこそ、お越しいただきありがとうございます。ご注文は何になさいますか？",
+    "pt-PT": "Bem-vindo, obrigado por estar aqui. O que gostaria de pedir?",
+    "pt-BR": "Bem-vindo, obrigado por estar aqui. O que você gostaria de pedir?",
+    "fr-FR": "Bienvenue, merci d'être ici. Que souhaitez-vous commander ?",
+    "zh-CN": "欢迎，感谢你的到来。你想点什么？",
+    "ru-RU": "Добро пожаловать, спасибо, что пришли. Что вы хотите заказать?",
+    "it-IT": "Benvenuto, grazie per essere qui. Cosa desideri ordinare?",
+    "ko-KR": "환영합니다, 와주셔서 감사합니다. 무엇을 주문하시겠어요?",
+    "nl-NL": "Welkom, bedankt dat je hier bent. Wat wil je bestellen?",
+    "pl-PL": "Witamy, dziękujemy, że jesteś tutaj. Co chcesz zamówić?",
+    "tr-TR": "Hoş geldiniz, burada olduğunuz için teşekkürler. Ne sipariş etmek istersiniz?",
+    "vi-VN": "Chào mừng bạn, cảm ơn bạn đã đến đây. Bạn muốn gọi món gì?"
 }
 
 ending_translations = {
