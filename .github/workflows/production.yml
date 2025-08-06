@@ -20,7 +20,7 @@ jobs:
       env:
         REPO: ${{secrets.DOCKER_REPO}}
       run: |
-        docker build --compress=true --force-rm=true -f Dockerfile.prod -t "${REPO}:llm" --push --build-arg FORMATTED_TAG=${{env.MY_TAG}} .
+        docker build --compress=true --force-rm=true -f Dockerfile -t "${REPO}:llm" --push --build-arg FORMATTED_TAG=${{env.MY_TAG}} .
     - name: Docker Pull and Run
       uses: appleboy/ssh-action@master
       with:
