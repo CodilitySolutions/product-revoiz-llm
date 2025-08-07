@@ -57,8 +57,6 @@ print('Agent Language: ', agent_language)
 MENU = json.loads(os.environ["MENU_LISTING"])
 print('Menu: ', MENU)
 
-# begin_sentence = "Welcome to our restaurant! I can help you place an order. What would you like to order today?"
-# ending_sentence = "Thank you for choosing our restaurant. Have a great day!"
 begin_sentence = os.environ["BEGIN_SENTENCE"]
 print('Begin Sentence: ', begin_sentence)
 ending_sentence = os.environ["ENDING_SENTENCE"]
@@ -645,12 +643,12 @@ class LlmClient:
                     yield response
                     
                     # Then send a final goodbye message and end the call
-                    response = ResponseResponse(
-                        response_id=request.response_id,
-                        content=ending_sentence,
-                        content_complete=True,
-                        end_call=True,
-                    )
+                    # response = ResponseResponse(
+                    #     response_id=request.response_id,
+                    #     content=ending_sentence,
+                    #     content_complete=True,
+                    #     end_call=True,
+                    # )
                     response.content = strip_markdown(response.content)
                     yield response
             else:
