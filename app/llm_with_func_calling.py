@@ -402,14 +402,14 @@ class LlmClient:
                         if category and category in MENU:
                             menu_text += f"{category.title()}:\n"
                             for item_id, item in MENU[category].items():
-                                menu_text += f"- {item['name']}: ${item['price']:.2f}\n"
-                                menu_text += f"  {item['description']}\n"
+                                menu_text += f"- {item['name']}: ₹{item['price']:.2f}\n"
+                                # menu_text += f"  {item['description']}\n"
                         else:
                             for category_name, items in MENU.items():
                                 menu_text += f"{category_name.title()}:\n"
                                 for item_id, item in items.items():
-                                    menu_text += f"- {item['name']}: ${item['price']:.2f}\n"
-                                    menu_text += f"  {item['description']}\n"
+                                    menu_text += f"- {item['name']}: ₹{item['price']:.2f}\n"
+                                    # menu_text += f"  {item['description']}\n"
                                 menu_text += "\n"
 
                         response = ResponseResponse(
@@ -510,10 +510,11 @@ class LlmClient:
                             total = sum(item["price"] * item["quantity"] for item in self.current_order)
                             summary = "Here's your current order:\n"
                             for item in self.current_order:
-                                summary += f"- {item['quantity']}x {item['name']} (${item['price']:.2f} each)\n"
-                                if item["special_instructions"]:
-                                    summary += f"  Special instructions: {item['special_instructions']}\n"
-                            summary += f"\nTotal: ${total:.2f}"
+                                if item['quantity'] > 1:
+                                    summary += f"- {item['quantity']} {item['name']} (₹{item['price']:.2f} each)\n"
+                                else:
+                                    summary += f"- {item['quantity']} {item['name']} (₹{item['price']:.2f})\n"
+                            summary += f"\nTotal: ₹{total:.2f}"
 
                         response = ResponseResponse(
                             response_id=request.response_id,
