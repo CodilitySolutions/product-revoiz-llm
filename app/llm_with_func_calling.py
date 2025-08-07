@@ -402,13 +402,13 @@ class LlmClient:
                         if category and category in MENU:
                             menu_text += f"{category.title()}:\n"
                             for item_id, item in MENU[category].items():
-                                menu_text += f"- {item['name']}: ₹{item['price']:.2f}\n"
+                                menu_text += f"- {item['name']}: {item['price']:.2f}\n"
                                 # menu_text += f"  {item['description']}\n"
                         else:
                             for category_name, items in MENU.items():
                                 menu_text += f"{category_name.title()}:\n"
                                 for item_id, item in items.items():
-                                    menu_text += f"- {item['name']}: ₹{item['price']:.2f}\n"
+                                    menu_text += f"- {item['name']}: {item['price']:.2f}\n"
                                     # menu_text += f"  {item['description']}\n"
                                 menu_text += "\n"
 
@@ -511,10 +511,10 @@ class LlmClient:
                             summary = "Here's your current order:\n"
                             for item in self.current_order:
                                 if item['quantity'] > 1:
-                                    summary += f"- {item['quantity']} {item['name']} (₹{item['price']:.2f} each)\n"
+                                    summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f} each)\n"
                                 else:
-                                    summary += f"- {item['quantity']} {item['name']} (₹{item['price']:.2f})\n"
-                            summary += f"\nTotal: ₹{total:.2f}"
+                                    summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f})\n"
+                            summary += f"\nTotal: {total:.2f}"
 
                         response = ResponseResponse(
                             response_id=request.response_id,
