@@ -108,10 +108,11 @@ backend_api_url = os.getenv("BACKEND_API_URL")
 print('backend_api_url: ', backend_api_url)
 
 def strip_markdown(text):
-    # Remove markdown emphasis and most special characters for cleaner TTS
+    # Remove markdown emphasis
     text = re.sub(r'(\*\*|\*|__|_)', '', text)
-    text = re.sub(r'[^\w\s\.\,\!\?]', '', text)
-    text = text.replace('_', '')
+    # Replace disallowed characters with a space (preserve letters, numbers, spaces, and basic punctuation)
+    text = re.sub(r'[^A-Za-z0-9\s\.,!?₹]', ' ', text)
+    # Collapse multiple spaces and trim
     text = re.sub(r'\s{2,}', ' ', text).strip()
     return text
 
