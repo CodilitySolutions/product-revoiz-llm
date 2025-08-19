@@ -122,6 +122,9 @@ def strip_markdown(text):
 class LlmClient:
     call_id: str
     current_order: List
+    customer_name: str
+    delivery_address: str
+    payment_method: str
     def __init__(self):
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -160,7 +163,7 @@ class LlmClient:
         self.call_id = call_id
 
     async def saveOrder(self, backend_api_url, order_details):
-        if backend_api_url and self.call_id:
+        if backend_api_url and self.call_id and order_details:
             post_url = f"{backend_api_url}/api/get-order-item/{self.call_id}/"
             try:
                 async with httpx.AsyncClient() as client:
@@ -175,15 +178,17 @@ class LlmClient:
         return backend_api_url
 
     def getCurrentOrder(self):
-        order_details = {
-            "customer_name": "Anonymous",
-            "delivery_address": "",
-            "payment_method": "",
-            "items": self.current_order,
-            "total": sum(item["price"] * item["quantity"] for item in self.current_order),
-            "order_time": datetime.datetime.now().isoformat()
-        }
-
+        if self.current_order:
+            order_details = {
+                "customer_name": self.customer_name,
+                "delivery_address": self.delivery_address,
+                "payment_method": self.payment_method,
+                "items": self.current_order,
+                "total": sum(item["price"] * item["quantity"] for item in self.current_order),
+                "order_time": datetime.datetime.now().isoformat()
+            }
+        else:
+            self.order_details = []
         return order_details
 
     def convert_transcript_to_openai_messages(self, transcript: List[Utterance]):
@@ -553,6 +558,9 @@ class LlmClient:
                 elif func_call["func_name"] == "save_order":
                     print('func_name=save_order')
                     try:
+                        self.customer_name = func_call["arguments"]["customer_name"]
+                        self.delivery_address = func_call["arguments"].get("delivery_address", "")
+                        self.payment_method = func_call["arguments"]["payment_method"]                        
                         # order_details = {
                         #     "customer_name": func_call["arguments"]["customer_name"],
                         #     "delivery_address": func_call["arguments"].get("delivery_address", ""),
@@ -617,6 +625,9 @@ class LlmClient:
                 elif func_call["func_name"] == "end_call":
                     print('func_name=end_call')
                     try:
+                        self.customer_name = func_call["arguments"]["customer_name"]
+                        self.delivery_address = func_call["arguments"].get("delivery_address", "")
+                        self.payment_method = func_call["arguments"]["payment_method"]
                         order_details = {
                             "customer_name": func_call["arguments"]["customer_name"],
                             "delivery_address": func_call["arguments"].get("delivery_address", ""),
