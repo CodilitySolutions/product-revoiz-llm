@@ -553,18 +553,18 @@ class LlmClient:
                 elif func_call["func_name"] == "save_order":
                     print('func_name=save_order')
                     try:
-                        order_details = {
-                            "customer_name": func_call["arguments"]["customer_name"],
-                            "delivery_address": func_call["arguments"].get("delivery_address", ""),
-                            "payment_method": func_call["arguments"]["payment_method"],
-                            "items": self.current_order,
-                            "total": sum(item["price"] * item["quantity"] for item in self.current_order),
-                            "order_time": datetime.datetime.now().isoformat()
-                        }
-                        print("Saving order:", json.dumps(order_details, indent=2))
+                        # order_details = {
+                        #     "customer_name": func_call["arguments"]["customer_name"],
+                        #     "delivery_address": func_call["arguments"].get("delivery_address", ""),
+                        #     "payment_method": func_call["arguments"]["payment_method"],
+                        #     "items": self.current_order,
+                        #     "total": sum(item["price"] * item["quantity"] for item in self.current_order),
+                        #     "order_time": datetime.datetime.now().isoformat()
+                        # }
+                        # print("Saving order:", json.dumps(order_details, indent=2))
 
                         # Post order to backend
-                        await self.saveOrder(backend_api_url, order_details)
+                        # await self.saveOrder(backend_api_url, order_details)
                         response = ResponseResponse(
                             response_id=request.response_id,
                             content=func_call["arguments"]["message"],
