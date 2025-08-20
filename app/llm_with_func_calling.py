@@ -135,6 +135,9 @@ class LlmClient:
             organization=os.getenv("OPENAI_ORGANIZATION_ID"),  # Optional
         )
         self.current_order = []  # Track the current order
+        self.customer_name = "Anonymous"
+        self.delivery_address = ""
+        self.payment_method = ""
         self.max_retries = 3
         self.retry_delay = 1  # seconds
 
@@ -178,17 +181,14 @@ class LlmClient:
         return backend_api_url
 
     def getCurrentOrder(self):
-        if self.current_order:
-            order_details = {
-                "customer_name": self.customer_name,
-                "delivery_address": self.delivery_address,
-                "payment_method": self.payment_method,
-                "items": self.current_order,
-                "total": sum(item["price"] * item["quantity"] for item in self.current_order),
-                "order_time": datetime.datetime.now().isoformat()
-            }
-        else:
-            self.order_details = []
+        order_details = {
+            "customer_name": getattr(self, "customer_name", "Anonymous"),
+            "delivery_address": getattr(self, "delivery_address", ""),
+            "payment_method": getattr(self, "payment_method", ""),
+            "items": self.current_order,
+            "total": sum(item["price"] * item["quantity"] for item in self.current_order),
+            "order_time": datetime.datetime.now().isoformat(),
+        }
         return order_details
 
     def convert_transcript_to_openai_messages(self, transcript: List[Utterance]):
