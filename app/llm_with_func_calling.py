@@ -166,7 +166,7 @@ class LlmClient:
         self.call_id = call_id
 
     async def saveOrder(self, backend_api_url, order_details):
-        if backend_api_url and self.call_id and order_details:
+        if backend_api_url and self.call_id:
             post_url = f"{backend_api_url}/api/get-order-item/{self.call_id}/"
             try:
                 async with httpx.AsyncClient() as client:
@@ -408,7 +408,7 @@ class LlmClient:
                     print('func_name=show_menu')
                     try:
                         category = func_call["arguments"].get("category")
-                        menu_text = "Here's our menu:\n\n"
+                        # menu_text = "Here's our menu:\n\n"
                         
                         if category and category in MENU:
                             menu_text += f"{category.title()}:\n"
@@ -582,14 +582,14 @@ class LlmClient:
                         response.content = strip_markdown(response.content)
                         yield response
 
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content="Order saved successfully! Thank you for your order.",
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
+                        # response = ResponseResponse(
+                        #     response_id=request.response_id,
+                        #     content="Order saved successfully! Thank you for your order.",
+                        #     content_complete=True,
+                        #     end_call=False,
+                        # )
+                        # response.content = strip_markdown(response.content)
+                        # yield response
                     except Exception as e:
                         response = ResponseResponse(
                             response_id=request.response_id,
