@@ -90,6 +90,7 @@ You should:
 6. Maintain a friendly, helpful, and professional tone throughout.
 7. Make sure to **repeat the order at least once** and ask for confirmation.
 8. Always save the order before concluding the conversation.
+9. If the customer mentions multiple items in one message, issue multiple `add_to_order` function calls—one per item—before responding.
 
 **Conversational Style**
 - Be friendly and welcoming, but professional.
@@ -361,8 +362,10 @@ class LlmClient:
     async def draft_response(self, request: ResponseRequiredRequest):
         try:
             prompt = self.prepare_prompt(request)
-            func_call = {}
-            func_arguments = ""
+            # Support multiple tool calls per model response
+            tool_calls_order = []  # preserve order of tool call ids
+            tool_call_map = {}     # id -> {"func_name": str, "arguments": str}
+            last_tool_call_id = None
             
             # Use retry logic for the API call
             stream = await self._make_api_call_with_retry(
@@ -379,17 +382,27 @@ class LlmClient:
                     continue
 
                 if chunk.choices[0].delta.tool_calls:
-                    tool_calls = chunk.choices[0].delta.tool_calls[0]
-                    if tool_calls.id:
-                        if func_call:
-                            break
-                        func_call = {
-                            "id": tool_calls.id,
-                            "func_name": tool_calls.function.name or "",
-                            "arguments": {},
-                        }
-                    else:
-                        func_arguments += tool_calls.function.arguments or ""
+                    for tc in chunk.choices[0].delta.tool_calls:
+                        tc_id = getattr(tc, "id", None)
+                        tc_fn = getattr(tc, "function", None)
+                        tc_name = getattr(tc_fn, "name", "") if tc_fn else ""
+                        tc_args_part = getattr(tc_fn, "arguments", "") if tc_fn else ""
+
+                        if tc_id:
+                            if tc_id not in tool_call_map:
+                                tool_call_map[tc_id] = {"func_name": tc_name or "", "arguments": ""}
+                                tool_calls_order.append(tc_id)
+                            # Keep latest known name if provided
+                            if tc_name:
+                                tool_call_map[tc_id]["func_name"] = tc_name
+                            last_tool_call_id = tc_id
+                        # Accumulate arguments for the most recent tool call when id is omitted
+                        target_tc_id = tc_id or last_tool_call_id
+                        if target_tc_id and tc_args_part:
+                            if target_tc_id not in tool_call_map:
+                                tool_call_map[target_tc_id] = {"func_name": tc_name or "", "arguments": ""}
+                                tool_calls_order.append(target_tc_id)
+                            tool_call_map[target_tc_id]["arguments"] += tc_args_part
 
                 if chunk.choices[0].delta.content:
                     response = ResponseResponse(
@@ -401,88 +414,38 @@ class LlmClient:
                     response.content = strip_markdown(response.content)
                     yield response
 
-            if func_call:
-                func_call["arguments"] = json.loads(func_arguments)
-                
-                if func_call["func_name"] == "show_menu":
-                    print('func_name=show_menu')
+            if tool_calls_order:
+                for tc_id in tool_calls_order:
+                    func_call = {
+                        "func_name": tool_call_map[tc_id].get("func_name", ""),
+                        "arguments": {}
+                    }
                     try:
-                        category = func_call["arguments"].get("category")
-                        # menu_text = "Here's our menu:\n\n"
-                        menu_text = ""
-                        
-                        if category and category in MENU:
-                            menu_text += f"{category.title()}:\n"
-                            for item_id, item in MENU[category].items():
-                                menu_text += f"- {item['name']}: {item['price']:.2f}\n"
-                                # menu_text += f"  {item['description']}\n"
-                        else:
-                            for category_name, items in MENU.items():
-                                menu_text += f"{category_name.title()}:\n"
-                                for item_id, item in items.items():
+                        func_call["arguments"] = json.loads(tool_call_map[tc_id].get("arguments", "{}"))
+                    except Exception as parse_exc:
+                        print("Failed to parse tool call arguments for", func_call["func_name"], ":", parse_exc)
+                        continue
+
+                    if func_call["func_name"] == "show_menu":
+                        print('func_name=show_menu')
+                        try:
+                            category = func_call["arguments"].get("category")
+                            # menu_text = "Here's our menu:\n\n"
+                            menu_text = ""
+                            
+                            if category and category in MENU:
+                                menu_text += f"{category.title()}:\n"
+                                for item_id, item in MENU[category].items():
                                     menu_text += f"- {item['name']}: {item['price']:.2f}\n"
                                     # menu_text += f"  {item['description']}\n"
-                                menu_text += "\n"
+                            else:
+                                for category_name, items in MENU.items():
+                                    menu_text += f"{category_name.title()}:\n"
+                                    for item_id, item in items.items():
+                                        menu_text += f"- {item['name']}: {item['price']:.2f}\n"
+                                        # menu_text += f"  {item['description']}\n"
+                                    menu_text += "\n"
 
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=func_call["arguments"]["message"],
-                            content_complete=False,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
-
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=menu_text,
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
-
-                    except Exception as e:
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=f"Error showing menu: {str(e)}",
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
-
-                elif func_call["func_name"] == "add_to_order":
-                    print('func_name=add_to_order')
-                    try:
-                        print("Add to order arguments:", func_call["arguments"])
-                        item_id = func_call["arguments"]["item_id"]
-                        quantity = func_call["arguments"]["quantity"]
-                        special_instructions = func_call["arguments"].get("special_instructions", "")
-
-                        item = None
-                        for category in MENU.values():
-                            if item_id in category:
-                                item = category[item_id]
-                                break
-                        
-                        if item:
-                            found = False
-                            for order_item in self.current_order:
-                                if order_item["item_id"] == item_id and order_item.get("special_instructions", "") == special_instructions:
-                                    order_item["quantity"] += quantity
-                                    found = True
-                                    break
-                            if not found:
-                                order_item = {
-                                    "item_id": item_id,
-                                    "name": item["name"],
-                                    "price": item["price"],
-                                    "quantity": quantity,
-                                    "special_instructions": special_instructions
-                                }
-                                self.current_order.append(order_item)
-                            
                             response = ResponseResponse(
                                 response_id=request.response_id,
                                 content=func_call["arguments"]["message"],
@@ -494,74 +457,133 @@ class LlmClient:
 
                             response = ResponseResponse(
                                 response_id=request.response_id,
-                                content=f"Added {quantity}x {item['name']} to your order.",
+                                content=menu_text,
                                 content_complete=True,
                                 end_call=False,
                             )
                             response.content = strip_markdown(response.content)
                             yield response
-                        else:
-                            raise ValueError(f"Item {item_id} not found in menu")
 
-                    except Exception as e:
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=f"Error adding item to order: {str(e)}",
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error showing menu: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
 
-                elif func_call["func_name"] == "show_order_summary":
-                    print('func_name=show_order_summary')
-                    try:
-                        if not self.current_order:
-                            summary = "Your order is currently empty."
-                        else:
-                            total = sum(item["price"] * item["quantity"] for item in self.current_order)
-                            summary = "Here's your current order:\n"
-                            for item in self.current_order:
-                                if item['quantity'] > 1:
-                                    summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f} each)\n"
-                                else:
-                                    summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f})\n"
-                            summary += f"\nTotal: {total:.2f}"
+                    elif func_call["func_name"] == "add_to_order":
+                        print('func_name=add_to_order')
+                        try:
+                            print("Add to order arguments:", func_call["arguments"])
+                            item_id = func_call["arguments"]["item_id"]
+                            quantity = func_call["arguments"]["quantity"]
+                            special_instructions = func_call["arguments"].get("special_instructions", "")
 
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=func_call["arguments"]["message"],
-                            content_complete=False,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
+                            item = None
+                            for category in MENU.values():
+                                if item_id in category:
+                                    item = category[item_id]
+                                    break
+                            
+                            if item:
+                                found = False
+                                for order_item in self.current_order:
+                                    if order_item["item_id"] == item_id and order_item.get("special_instructions", "") == special_instructions:
+                                        order_item["quantity"] += quantity
+                                        found = True
+                                        break
+                                if not found:
+                                    order_item = {
+                                        "item_id": item_id,
+                                        "name": item["name"],
+                                        "price": item["price"],
+                                        "quantity": quantity,
+                                        "special_instructions": special_instructions
+                                    }
+                                    self.current_order.append(order_item)
+                                
+                                response = ResponseResponse(
+                                    response_id=request.response_id,
+                                    content=func_call["arguments"]["message"],
+                                    content_complete=False,
+                                    end_call=False,
+                                )
+                                response.content = strip_markdown(response.content)
+                                yield response
 
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=summary,
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
+                                response = ResponseResponse(
+                                    response_id=request.response_id,
+                                    content=f"Added {quantity}x {item['name']} to your order.",
+                                    content_complete=True,
+                                    end_call=False,
+                                )
+                                response.content = strip_markdown(response.content)
+                                yield response
+                            else:
+                                raise ValueError(f"Item {item_id} not found in menu")
 
-                    except Exception as e:
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=f"Error showing order summary: {str(e)}",
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error adding item to order: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
 
-                elif func_call["func_name"] == "save_order":
-                    print('func_name=save_order')
-                    try:
-                        self.customer_name = func_call["arguments"]["customer_name"]
-                        self.delivery_address = func_call["arguments"].get("delivery_address", "")
-                        self.payment_method = func_call["arguments"]["payment_method"]                        
+                    elif func_call["func_name"] == "show_order_summary":
+                        print('func_name=show_order_summary')
+                        try:
+                            if not self.current_order:
+                                summary = "Your order is currently empty."
+                            else:
+                                total = sum(item["price"] * item["quantity"] for item in self.current_order)
+                                summary = "Here's your current order:\n"
+                                for item in self.current_order:
+                                    if item['quantity'] > 1:
+                                        summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f} each)\n"
+                                    else:
+                                        summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f})\n"
+                                summary += f"\nTotal: {total:.2f}"
+
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=func_call["arguments"]["message"],
+                                content_complete=False,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=summary,
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error showing order summary: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+                    elif func_call["func_name"] == "save_order":
+                        print('func_name=save_order')
+                        try:
+                            self.customer_name = func_call["arguments"]["customer_name"]
+                            self.delivery_address = func_call["arguments"].get("delivery_address", "")
+                            self.payment_method = func_call["arguments"]["payment_method"]                        
                         # order_details = {
                         #     "customer_name": func_call["arguments"]["customer_name"],
                         #     "delivery_address": func_call["arguments"].get("delivery_address", ""),
@@ -574,14 +596,14 @@ class LlmClient:
 
                         # Post order to backend
                         # await self.saveOrder(backend_api_url, order_details)
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=func_call["arguments"]["message"],
-                            content_complete=False,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=func_call["arguments"]["message"],
+                                content_complete=False,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
 
                         # response = ResponseResponse(
                         #     response_id=request.response_id,
@@ -591,76 +613,76 @@ class LlmClient:
                         # )
                         # response.content = strip_markdown(response.content)
                         # yield response
-                    except Exception as e:
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error saving order: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+                    elif func_call["func_name"] == "cancel_order":
+                        print('func_name=cancel_order')
+                        try:
+                            self.current_order = []
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=func_call["arguments"]["message"],
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error cancelling order: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+                    elif func_call["func_name"] == "end_call":
+                        print('func_name=end_call')
+                        try:
+                            self.customer_name = func_call["arguments"]["customer_name"]
+                            self.delivery_address = func_call["arguments"].get("delivery_address", "")
+                            self.payment_method = func_call["arguments"]["payment_method"]
+                            order_details = {
+                                "customer_name": func_call["arguments"]["customer_name"],
+                                "delivery_address": func_call["arguments"].get("delivery_address", ""),
+                                "payment_method": func_call["arguments"]["payment_method"],
+                                "items": self.current_order,
+                                "total": sum(item["price"] * item["quantity"] for item in self.current_order),
+                                "order_time": datetime.datetime.now().isoformat()
+                            }
+                            print("Saving order:", json.dumps(order_details, indent=2))
+
+                            # Post order to backend
+                            await self.saveOrder(backend_api_url, order_details)
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error saving order: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+                        ending_message = func_call["arguments"]["message"]
+                        # First send the ending message
                         response = ResponseResponse(
                             response_id=request.response_id,
-                            content=f"Error saving order: {str(e)}",
+                            content=ending_message,
                             content_complete=True,
                             end_call=False,
                         )
                         response.content = strip_markdown(response.content)
                         yield response
-
-                elif func_call["func_name"] == "cancel_order":
-                    print('func_name=cancel_order')
-                    try:
-                        self.current_order = []
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=func_call["arguments"]["message"],
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
-                    except Exception as e:
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=f"Error cancelling order: {str(e)}",
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
-
-                elif func_call["func_name"] == "end_call":
-                    print('func_name=end_call')
-                    try:
-                        self.customer_name = func_call["arguments"]["customer_name"]
-                        self.delivery_address = func_call["arguments"].get("delivery_address", "")
-                        self.payment_method = func_call["arguments"]["payment_method"]
-                        order_details = {
-                            "customer_name": func_call["arguments"]["customer_name"],
-                            "delivery_address": func_call["arguments"].get("delivery_address", ""),
-                            "payment_method": func_call["arguments"]["payment_method"],
-                            "items": self.current_order,
-                            "total": sum(item["price"] * item["quantity"] for item in self.current_order),
-                            "order_time": datetime.datetime.now().isoformat()
-                        }
-                        print("Saving order:", json.dumps(order_details, indent=2))
-
-                        # Post order to backend
-                        await self.saveOrder(backend_api_url, order_details)
-                    except Exception as e:
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=f"Error saving order: {str(e)}",
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
-
-                    ending_message = func_call["arguments"]["message"]
-                    # First send the ending message
-                    response = ResponseResponse(
-                        response_id=request.response_id,
-                        content=ending_message,
-                        content_complete=True,
-                        end_call=False,
-                    )
-                    response.content = strip_markdown(response.content)
-                    yield response
                     
                     # Then send a final goodbye message and end the call
                     # response = ResponseResponse(
