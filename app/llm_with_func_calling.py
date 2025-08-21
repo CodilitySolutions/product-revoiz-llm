@@ -192,6 +192,26 @@ class LlmClient:
         }
         return order_details
 
+    def _normalize_identifier(self, text: str) -> str:
+        # Lowercase and remove non-alphanumeric characters for fuzzy matching
+        return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+    def _find_menu_item(self, identifier: str):
+        # Try exact id match first
+        for category in MENU.values():
+            if identifier in category:
+                return identifier, category[identifier]
+
+        # Fallback to normalized matching on id and item name
+        norm_identifier = self._normalize_identifier(identifier)
+        for category in MENU.values():
+            for item_key, item in category.items():
+                if self._normalize_identifier(item_key) == norm_identifier:
+                    return item_key, item
+                if self._normalize_identifier(item.get("name", "")) == norm_identifier:
+                    return item_key, item
+        return None, None
+
     def convert_transcript_to_openai_messages(self, transcript: List[Utterance]):
         messages = []
         for utterance in transcript:
@@ -479,14 +499,23 @@ class LlmClient:
                         try:
                             print("Add to order arguments:", func_call["arguments"])
                             item_id = func_call["arguments"]["item_id"]
-                            quantity = func_call["arguments"]["quantity"]
+                            quantity_raw = func_call["arguments"]["quantity"]
+                            # Normalize quantity to an integer >= 1
+                            try:
+                                if isinstance(quantity_raw, str):
+                                    quantity = int(float(quantity_raw.strip()))
+                                else:
+                                    quantity = int(quantity_raw)
+                            except Exception:
+                                quantity = 1
+                            if quantity < 1:
+                                quantity = 1
                             special_instructions = func_call["arguments"].get("special_instructions", "")
 
-                            item = None
-                            for category in MENU.values():
-                                if item_id in category:
-                                    item = category[item_id]
-                                    break
+                            # Support flexible item identifiers
+                            matched_item_key, item = self._find_menu_item(item_id)
+                            if item and matched_item_key != item_id:
+                                item_id = matched_item_key
                             
                             if item:
                                 found = False
@@ -522,6 +551,7 @@ class LlmClient:
                                 )
                                 response.content = strip_markdown(response.content)
                                 yield response
+                                print("Current order after add:", json.dumps(self.current_order))
                             else:
                                 raise ValueError(f"Item {item_id} not found in menu")
 
