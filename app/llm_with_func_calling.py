@@ -141,6 +141,8 @@ class LlmClient:
         self.payment_method = ""
         self.max_retries = 3
         self.retry_delay = 1  # seconds
+        self.order_saved = False
+        self.save_order_announced = False
 
     async def _make_api_call_with_retry(self, func, *args, **kwargs):
         for attempt in range(self.max_retries):
@@ -173,6 +175,8 @@ class LlmClient:
                 async with httpx.AsyncClient() as client:
                     post_response = await client.post(post_url, json=order_details)
                     print("Order POST response:", post_response.status_code, post_response.text)
+                    if 200 <= post_response.status_code < 300:
+                        self.order_saved = True
             except Exception as post_exc:
                 print("Failed to POST order:", post_exc)
         else:
@@ -611,6 +615,9 @@ class LlmClient:
                     elif func_call["func_name"] == "save_order":
                         print('func_name=save_order')
                         try:
+                            if self.save_order_announced:
+                                # Avoid repeating announcements
+                                continue
                             self.customer_name = func_call["arguments"]["customer_name"]
                             self.delivery_address = func_call["arguments"].get("delivery_address", "")
                             self.payment_method = func_call["arguments"]["payment_method"]                        
@@ -634,6 +641,7 @@ class LlmClient:
                             )
                             response.content = strip_markdown(response.content)
                             yield response
+                            self.save_order_announced = True
 
                         # response = ResponseResponse(
                         #     response_id=request.response_id,
@@ -691,8 +699,9 @@ class LlmClient:
                             }
                             print("Saving order:", json.dumps(order_details, indent=2))
 
-                            # Post order to backend
-                            await self.saveOrder(backend_api_url, order_details)
+                            # Post order to backend once
+                            if not self.order_saved:
+                                await self.saveOrder(backend_api_url, order_details)
                         except Exception as e:
                             response = ResponseResponse(
                                 response_id=request.response_id,
