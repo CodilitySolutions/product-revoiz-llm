@@ -91,6 +91,7 @@ You should:
 7. Make sure to **repeat the order at least once** and ask for confirmation.
 8. Always save the order before concluding the conversation.
 9. If the customer mentions multiple items in one message, issue multiple `add_to_order` function calls—one per item—before responding.
+10. **Use the `replace` parameter when customers want exact quantities (e.g., "I only need 3 burgers", "make it 2 pizzas") instead of adding to existing quantities.**
 
 **Conversational Style**
 - Be friendly and welcoming, but professional.
@@ -290,6 +291,10 @@ class LlmClient:
                             "quantity": {
                                 "type": "integer",
                                 "description": "The quantity of the item being ordered"
+                            },
+                            "replace": {
+                                "type": "boolean",
+                                "description": "If true, replace the current quantity instead of adding to it. Use when customer wants exact quantity like 'I only need 3 burgers'"
                             },
                             "special_instructions": {
                                 "type": "string",
@@ -515,6 +520,7 @@ class LlmClient:
                             if quantity < 1:
                                 quantity = 1
                             special_instructions = func_call["arguments"].get("special_instructions", "")
+                            replace = func_call["arguments"].get("replace", False)
 
                             # Support flexible item identifiers
                             matched_item_key, item = self._find_menu_item(item_id)
@@ -525,7 +531,10 @@ class LlmClient:
                                 found = False
                                 for order_item in self.current_order:
                                     if order_item["item_id"] == item_id and order_item.get("special_instructions", "") == special_instructions:
-                                        order_item["quantity"] += quantity
+                                        if replace:
+                                            order_item["quantity"] = quantity
+                                        else:
+                                            order_item["quantity"] += quantity
                                         found = True
                                         break
                                 if not found:
@@ -549,7 +558,7 @@ class LlmClient:
 
                                 response = ResponseResponse(
                                     response_id=request.response_id,
-                                    content=f"Added {quantity}x {item['name']} to your order.",
+                                    content=f"{'Set' if replace else 'Added'} {quantity}x {item['name']} to your order.",
                                     content_complete=True,
                                     end_call=False,
                                 )
