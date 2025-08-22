@@ -113,6 +113,7 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
             nonlocal response_id
 
             try:
+                print(json.dumps(request_json, indent=2))
                 # There are 5 types of interaction_type: call_details, pingpong, update_only, response_required, and reminder_required.
                 # Not all of them need to be handled, only response_required and reminder_required.
                 if request_json["interaction_type"] == "call_details":
