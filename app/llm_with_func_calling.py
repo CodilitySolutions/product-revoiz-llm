@@ -31,7 +31,8 @@ language_codes = {
     'nl-NL': 'Netherlands (Dutch)',
     'pl-PL': 'Poland (Polish)',
     'tr-TR': 'Turkey (Turkish)',
-    'vi-VN': 'Vietnam (Vietnamese)'
+    'vi-VN': 'Vietnam (Vietnamese)', 
+    'ur-IN': 'Urdu (Pakistan)'
 }
 
 language_code = os.environ["ORDER_LANG"]
