@@ -460,20 +460,24 @@ class LlmClient:
                         print('func_name=show_menu')
                         try:
                             category = func_call["arguments"].get("category")
-                            # menu_text = "Here's our menu:\n\n"
                             menu_text = ""
-                            
-                            if category and category in MENU:
+
+                            # Specific category requested
+                            if category and category in MENU and category != "gst_info":
                                 menu_text += f"{category.title()}:\n"
                                 for item_id, item in MENU[category].items():
-                                    menu_text += f"- {item['name']}: {item['price']:.2f}\n"
-                                    # menu_text += f"  {item['description']}\n"
+                                    if isinstance(item, dict) and "name" in item and "price" in item:
+                                        menu_text += f"- {item['name']}: {item['price']:.2f}\n"
+
+                            # Show all categories, skip gst_info
                             else:
                                 for category_name, items in MENU.items():
+                                    if category_name == "gst_info":
+                                        continue
                                     menu_text += f"{category_name.title()}:\n"
                                     for item_id, item in items.items():
-                                        menu_text += f"- {item['name']}: {item['price']:.2f}\n"
-                                        # menu_text += f"  {item['description']}\n"
+                                        if isinstance(item, dict) and "name" in item and "price" in item:
+                                            menu_text += f"- {item['name']}: {item['price']:.2f}\n"
                                     menu_text += "\n"
 
                             response = ResponseResponse(
@@ -487,7 +491,7 @@ class LlmClient:
 
                             response = ResponseResponse(
                                 response_id=request.response_id,
-                                content=menu_text,
+                                content=menu_text.strip(),
                                 content_complete=True,
                                 end_call=False,
                             )
