@@ -511,72 +511,112 @@ class LlmClient:
                     elif func_call["func_name"] == "add_to_order":
                         print('func_name=add_to_order')
                         try:
-                            print("Add to order arguments:", func_call["arguments"])
-                            item_id = func_call["arguments"]["item_id"]
-                            quantity_raw = func_call["arguments"]["quantity"]
-                            # Normalize quantity to an integer >= 1
-                            try:
-                                if isinstance(quantity_raw, str):
-                                    quantity = int(float(quantity_raw.strip()))
-                                else:
-                                    quantity = int(quantity_raw)
-                            except Exception:
-                                quantity = 1
-                            if quantity < 1:
-                                quantity = 1
-                            special_instructions = func_call["arguments"].get("special_instructions", "")
-                            replace = func_call["arguments"].get("replace", False)
+                            # ✅ Collect all add_to_order tool calls from same message
+                            add_calls = [
+                                tool_call_map[tc_id]
+                                for tc_id in tool_calls_order
+                                if tool_call_map[tc_id].get("func_name") == "add_to_order"
+                            ]
 
-                            # Support flexible item identifiers
-                            matched_item_key, item = self._find_menu_item(item_id)
-                            if item and matched_item_key != item_id:
-                                item_id = matched_item_key
-                            
-                            if item:
+                            # Remove them from queue to avoid reprocessing
+                            tool_calls_order = [
+                                tc_id
+                                for tc_id in tool_calls_order
+                                if tool_call_map[tc_id].get("func_name") != "add_to_order"
+                            ]
+
+                            added_items = []
+                            item_updates = {}
+
+                            # ✅ 1. Combine duplicates from same user message
+                            for tc_data in add_calls:
+                                try:
+                                    args = json.loads(tc_data.get("arguments", "{}"))
+                                except Exception:
+                                    continue
+
+                                item_id = args.get("item_id")
+                                quantity_raw = args.get("quantity", 1)
+                                replace = args.get("replace", False)
+                                special_instructions = args.get("special_instructions", "")
+
+                                # Normalize quantity
+                                try:
+                                    quantity = int(float(str(quantity_raw).strip()))
+                                except Exception:
+                                    quantity = 1
+                                if quantity < 1:
+                                    quantity = 1
+
+                                matched_item_key, item = self._find_menu_item(item_id)
+                                if item and matched_item_key != item_id:
+                                    item_id = matched_item_key
+
+                                if not item:
+                                    print(f"Item not found: {item_id}")
+                                    continue
+
+                                key = (item_id, special_instructions)
+                                if key not in item_updates:
+                                    item_updates[key] = {
+                                        "item": item,
+                                        "quantity": quantity,
+                                        "replace": replace,
+                                        "special_instructions": special_instructions
+                                    }
+                                else:
+                                    item_updates[key]["quantity"] += quantity
+
+                            # ✅ 2. Update or add items in the order
+                            for (item_id, special_instructions), update_info in item_updates.items():
+                                item = update_info["item"]
+                                new_qty = update_info["quantity"]
+                                replace = update_info["replace"]
+
                                 found = False
                                 for order_item in self.current_order:
                                     if order_item["item_id"] == item_id and order_item.get("special_instructions", "") == special_instructions:
                                         if replace:
-                                            order_item["quantity"] = quantity
+                                            order_item["quantity"] = new_qty   # 🔄 Replace
                                         else:
-                                            order_item["quantity"] += quantity
+                                            order_item["quantity"] += new_qty  # ➕ Increase
                                         found = True
                                         break
+
                                 if not found:
-                                    order_item = {
+                                    # 🆕 Add as new
+                                    self.current_order.append({
                                         "item_id": item_id,
                                         "name": item["name"],
                                         "price": item["price"],
-                                        "quantity": quantity,
+                                        "quantity": new_qty,
                                         "special_instructions": special_instructions
-                                    }
-                                    self.current_order.append(order_item)
-                                
-                                response = ResponseResponse(
-                                    response_id=request.response_id,
-                                    content=func_call["arguments"]["message"],
-                                    content_complete=False,
-                                    end_call=False,
-                                )
-                                response.content = strip_markdown(response.content)
-                                yield response
+                                    })
 
-                                response = ResponseResponse(
-                                    response_id=request.response_id,
-                                    content=f"{'Set' if replace else 'Added'} {quantity}x {item['name']} to your order.",
-                                    content_complete=True,
-                                    end_call=False,
-                                )
-                                response.content = strip_markdown(response.content)
-                                yield response
-                                print("Current order after add:", json.dumps(self.current_order))
+                            # ✅ 3. Build a clean summary message only
+                            for item in self.current_order:
+                                added_items.append(f"{item['quantity']}x {item['name']}")
+
+                            if len(added_items) == 1:
+                                summary_message = f"Updated your order: {added_items[0]}."
                             else:
-                                raise ValueError(f"Item {item_id} not found in menu")
+                                summary_message = "Updated your order: " + ", ".join(added_items[:-1]) + f" and {added_items[-1]}."
+
+                            print("Current order after update:", json.dumps(self.current_order, indent=2))
+
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=summary_message,
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
 
                         except Exception as e:
                             response = ResponseResponse(
                                 response_id=request.response_id,
-                                content=f"Error adding item to order: {str(e)}",
+                                content=f"Error updating order: {str(e)}",
                                 content_complete=True,
                                 end_call=False,
                             )
