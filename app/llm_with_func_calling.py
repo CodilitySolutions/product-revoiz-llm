@@ -174,6 +174,7 @@ class LlmClient:
         if backend_api_url and self.call_id and order_details:
             post_url = f"{backend_api_url}/api/get-order-item/{self.call_id}/"
             try:
+                print("Order details to POST:", json.dumps(order_details, indent=2))
                 async with httpx.AsyncClient() as client:
                     post_response = await client.post(post_url, json=order_details)
                     print("Order POST response:", post_response.status_code, post_response.text)
@@ -283,7 +284,7 @@ class LlmClient:
                         "properties": {
                             "message": {
                                 "type": "string",
-                                "description": "Confirmation message to the customer about the item being added"
+                                "description": "Adds or updates items in the order. Only use when the user explicitly mentions ordering actions.",
                             },
                             "item_id": {
                                 "type": "string",
@@ -511,14 +512,15 @@ class LlmClient:
                     elif func_call["func_name"] == "add_to_order":
                         print('func_name=add_to_order')
                         try:
-                            # ✅ Collect all add_to_order tool calls from same message
+                            # ✅ Only process all add_to_order calls once per user message
+                            # Collect all "add_to_order" calls from this response
                             add_calls = [
                                 tool_call_map[tc_id]
                                 for tc_id in tool_calls_order
                                 if tool_call_map[tc_id].get("func_name") == "add_to_order"
                             ]
 
-                            # Remove them from queue to avoid reprocessing
+                            # Avoid re-running this block multiple times for each add_to_order
                             tool_calls_order = [
                                 tc_id
                                 for tc_id in tool_calls_order
@@ -526,9 +528,7 @@ class LlmClient:
                             ]
 
                             added_items = []
-                            item_updates = {}
 
-                            # ✅ 1. Combine duplicates from same user message
                             for tc_data in add_calls:
                                 try:
                                     args = json.loads(tc_data.get("arguments", "{}"))
@@ -537,8 +537,8 @@ class LlmClient:
 
                                 item_id = args.get("item_id")
                                 quantity_raw = args.get("quantity", 1)
-                                replace = args.get("replace", False)
                                 special_instructions = args.get("special_instructions", "")
+                                replace = args.get("replace", False)
 
                                 # Normalize quantity
                                 try:
@@ -556,57 +556,43 @@ class LlmClient:
                                     print(f"Item not found: {item_id}")
                                     continue
 
-                                key = (item_id, special_instructions)
-                                if key not in item_updates:
-                                    item_updates[key] = {
-                                        "item": item,
-                                        "quantity": quantity,
-                                        "replace": replace,
-                                        "special_instructions": special_instructions
-                                    }
-                                else:
-                                    item_updates[key]["quantity"] += quantity
-
-                            # ✅ 2. Update or add items in the order
-                            for (item_id, special_instructions), update_info in item_updates.items():
-                                item = update_info["item"]
-                                new_qty = update_info["quantity"]
-                                replace = update_info["replace"]
-
+                                # Update or add to order (only once per request)
                                 found = False
                                 for order_item in self.current_order:
                                     if order_item["item_id"] == item_id and order_item.get("special_instructions", "") == special_instructions:
                                         if replace:
-                                            order_item["quantity"] = new_qty   # 🔄 Replace
+                                            order_item["quantity"] = quantity
                                         else:
-                                            order_item["quantity"] += new_qty  # ➕ Increase
+                                            # ✅ Add only once, don’t double increment
+                                            order_item["quantity"] += quantity
                                         found = True
                                         break
-
                                 if not found:
-                                    # 🆕 Add as new
                                     self.current_order.append({
                                         "item_id": item_id,
                                         "name": item["name"],
                                         "price": item["price"],
-                                        "quantity": new_qty,
+                                        "quantity": quantity,
                                         "special_instructions": special_instructions
                                     })
 
-                            # ✅ 3. Build a clean summary message only
-                            for item in self.current_order:
-                                added_items.append(f"{item['quantity']}x {item['name']}")
+                                added_items.append(f"{quantity}x {item['name']}")
 
-                            if len(added_items) == 1:
-                                summary_message = f"Added your order: {added_items[0]}."
+                            # ✅ Create unified message
+                            if added_items:
+                                if len(added_items) == 1:
+                                    combined_message = f"Added {added_items[0]} to your order."
+                                else:
+                                    combined_message = "Added " + ", ".join(added_items[:-1]) + f" and {added_items[-1]} to your order."
                             else:
-                                summary_message = "Added your order: " + ", ".join(added_items[:-1]) + f" and {added_items[-1]}."
+                                combined_message = "No valid items were added to your order."
 
-                            print("Current order after update:", json.dumps(self.current_order, indent=2))
+                            print("Current order after add:", json.dumps(self.current_order))
 
+                            # Send a single final combined response
                             response = ResponseResponse(
                                 response_id=request.response_id,
-                                content=summary_message,
+                                content=combined_message,
                                 content_complete=True,
                                 end_call=False,
                             )
@@ -616,7 +602,7 @@ class LlmClient:
                         except Exception as e:
                             response = ResponseResponse(
                                 response_id=request.response_id,
-                                content=f"Error updating order: {str(e)}",
+                                content=f"Error adding items to order: {str(e)}",
                                 content_complete=True,
                                 end_call=False,
                             )
