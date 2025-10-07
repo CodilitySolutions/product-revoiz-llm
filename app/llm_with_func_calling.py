@@ -598,9 +598,9 @@ class LlmClient:
                                 added_items.append(f"{item['quantity']}x {item['name']}")
 
                             if len(added_items) == 1:
-                                summary_message = f"Updated your order: {added_items[0]}."
+                                summary_message = f"Added your order: {added_items[0]}."
                             else:
-                                summary_message = "Updated your order: " + ", ".join(added_items[:-1]) + f" and {added_items[-1]}."
+                                summary_message = "Added your order: " + ", ".join(added_items[:-1]) + f" and {added_items[-1]}."
 
                             print("Current order after update:", json.dumps(self.current_order, indent=2))
 
