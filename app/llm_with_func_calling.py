@@ -92,7 +92,15 @@ You should:
 7. Make sure to **repeat the order at least once** and ask for confirmation.
 8. Always save the order before concluding the conversation.
 9. If the customer mentions multiple items in one message, issue multiple `add_to_order` function calls—one per item—before responding.
-10. **Use the `replace` parameter when customers want exact quantities (e.g., "I only need 3 burgers", "make it 2 pizzas") instead of adding to existing quantities.**
+10. **Use the `replace` parameter when customers want exact quantities (e.g., "I only need 3 burgers", "change it to 2 pizzas", "make it 5 biryanis") instead of adding to existing quantities.**
+11. **Use `remove_from_order` when customers want to reduce or remove items (e.g., "remove 5 Pepsi" reduces by 5, "remove the salad" deletes it completely). Include the quantity parameter when the customer specifies a number to remove.**
+12. **IMPORTANT: Only use `add_to_order` when customers mention specific menu items to order. Do NOT use it when they provide personal information (name, address, payment method) or ask general questions.**
+
+**Order Modification Guidelines**
+- **Adding items**: Use `add_to_order` without the `replace` parameter (e.g., "add 2 burgers" adds 2 more)
+- **Replacing quantity**: Use `add_to_order` with `replace=true` (e.g., "change it to 5 burgers" sets quantity to exactly 5)
+- **Removing specific quantity**: Use `remove_from_order` with quantity (e.g., "remove 5 Pepsi" reduces Pepsi by 5)
+- **Removing entire item**: Use `remove_from_order` without quantity (e.g., "remove the pizza" deletes it completely)
 
 **Conversational Style**
 - Be friendly and welcoming, but professional.
@@ -278,13 +286,13 @@ class LlmClient:
                 "type": "function",
                 "function": {
                     "name": "add_to_order",
-                    "description": "Add an item to the customer's order",
+                    "description": "Add menu items to the customer's order. ONLY use this when the customer explicitly requests to order, add, or modify food/drink items from the menu. DO NOT use for personal information like name, address, or payment method.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "message": {
                                 "type": "string",
-                                "description": "Adds or updates items in the order. Only use when the user explicitly mentions ordering actions.",
+                                "description": "Confirmation message about adding the item to the order",
                             },
                             "item_id": {
                                 "type": "string",
@@ -310,6 +318,31 @@ class LlmClient:
             {
                 "type": "function",
                 "function": {
+                    "name": "remove_from_order",
+                    "description": "Remove or reduce the quantity of an item from the customer's order. ONLY use this when the customer explicitly requests to remove or delete items from their order.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "Confirmation message about removing the item from the order"
+                            },
+                            "item_id": {
+                                "type": "string",
+                                "description": "The ID of the menu item to be removed from the order"
+                            },
+                            "quantity": {
+                                "type": "integer",
+                                "description": "Optional: The quantity to remove. If not provided or if quantity >= current quantity, the entire item will be removed. If provided and less than current quantity, only that amount will be subtracted."
+                            }
+                        },
+                        "required": ["message", "item_id"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "show_order_summary",
                     "description": "Show the current order summary to the customer",
                     "parameters": {
@@ -328,7 +361,7 @@ class LlmClient:
                 "type": "function",
                 "function": {
                     "name": "save_order",
-                    "description": "Save the completed order to the database",
+                    "description": "Save the completed order to the database. Use this ONLY when you have collected ALL required information: customer name, payment method, and confirmed the order items. This should be called after the customer provides their name and payment method.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -408,7 +441,6 @@ class LlmClient:
             )
 
             async for chunk in stream:
-                print('chunk======================', chunk)
                 if len(chunk.choices) == 0:
                     continue
 
@@ -446,6 +478,9 @@ class LlmClient:
                     yield response
 
             if tool_calls_order:
+                # Track which function types we've already processed to avoid duplicates
+                processed_add_to_order = False
+                
                 for tc_id in tool_calls_order:
                     func_call = {
                         "func_name": tool_call_map[tc_id].get("func_name", ""),
@@ -462,15 +497,11 @@ class LlmClient:
                         try:
                             category = func_call["arguments"].get("category")
                             menu_text = ""
-
-                            # Specific category requested
                             if category and category in MENU and category != "gst_info":
                                 menu_text += f"{category.title()}:\n"
                                 for item_id, item in MENU[category].items():
                                     if isinstance(item, dict) and "name" in item and "price" in item:
                                         menu_text += f"- {item['name']}: {item['price']:.2f}\n"
-
-                            # Show all categories, skip gst_info
                             else:
                                 for category_name, items in MENU.items():
                                     if category_name == "gst_info":
@@ -492,7 +523,7 @@ class LlmClient:
 
                             response = ResponseResponse(
                                 response_id=request.response_id,
-                                content=menu_text.strip(),
+                                content=menu_text,
                                 content_complete=True,
                                 end_call=False,
                             )
@@ -510,7 +541,13 @@ class LlmClient:
                             yield response
 
                     elif func_call["func_name"] == "add_to_order":
+                        # Skip if we've already processed all add_to_order calls
+                        if processed_add_to_order:
+                            continue
+                            
                         print('func_name=add_to_order')
+                        processed_add_to_order = True  # Mark as processed
+                        
                         try:
                             # ✅ Only process all add_to_order calls once per user message
                             # Collect all "add_to_order" calls from this response
@@ -518,13 +555,6 @@ class LlmClient:
                                 tool_call_map[tc_id]
                                 for tc_id in tool_calls_order
                                 if tool_call_map[tc_id].get("func_name") == "add_to_order"
-                            ]
-
-                            # Avoid re-running this block multiple times for each add_to_order
-                            tool_calls_order = [
-                                tc_id
-                                for tc_id in tool_calls_order
-                                if tool_call_map[tc_id].get("func_name") != "add_to_order"
                             ]
 
                             added_items = []
@@ -556,18 +586,24 @@ class LlmClient:
                                     print(f"Item not found: {item_id}")
                                     continue
 
-                                # Update or add to order (only once per request)
+                                # Update or add to order
                                 found = False
                                 for order_item in self.current_order:
                                     if order_item["item_id"] == item_id and order_item.get("special_instructions", "") == special_instructions:
+                                        old_qty = order_item["quantity"]
                                         if replace:
+                                            # Replace: Set to exact quantity
                                             order_item["quantity"] = quantity
+                                            print(f"Replaced {item['name']}: {old_qty} → {quantity}")
                                         else:
-                                            # ✅ Add only once, don’t double increment
+                                            # Add: Increase quantity
                                             order_item["quantity"] += quantity
+                                            print(f"Added to {item['name']}: {old_qty} → {order_item['quantity']}")
                                         found = True
                                         break
+                                
                                 if not found:
+                                    # New item: Add to order
                                     self.current_order.append({
                                         "item_id": item_id,
                                         "name": item["name"],
@@ -575,6 +611,7 @@ class LlmClient:
                                         "quantity": quantity,
                                         "special_instructions": special_instructions
                                     })
+                                    print(f"Added new item: {quantity}x {item['name']}")
 
                                 added_items.append(f"{quantity}x {item['name']}")
 
@@ -603,6 +640,81 @@ class LlmClient:
                             response = ResponseResponse(
                                 response_id=request.response_id,
                                 content=f"Error adding items to order: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+
+
+
+                    elif func_call["func_name"] == "remove_from_order":
+                        print('func_name=remove_from_order')
+                        try:
+                            item_id = func_call["arguments"].get("item_id")
+                            quantity_to_remove = func_call["arguments"].get("quantity")
+                            
+                            # Find and normalize the item ID
+                            matched_item_key, item = self._find_menu_item(item_id)
+                            if item and matched_item_key != item_id:
+                                item_id = matched_item_key
+                            
+                            # Normalize quantity to remove
+                            if quantity_to_remove is not None:
+                                try:
+                                    quantity_to_remove = int(float(str(quantity_to_remove).strip()))
+                                    if quantity_to_remove < 1:
+                                        quantity_to_remove = None  # Invalid, treat as remove all
+                                except Exception:
+                                    quantity_to_remove = None  # Invalid, treat as remove all
+                            
+                            # Remove or reduce quantity of the item from the order
+                            removed = False
+                            reduced = False
+                            removed_item_name = ""
+                            
+                            for i, order_item in enumerate(self.current_order):
+                                if order_item["item_id"] == item_id:
+                                    removed_item_name = order_item["name"]
+                                    current_qty = order_item["quantity"]
+                                    
+                                    # If quantity specified and less than current, reduce it
+                                    if quantity_to_remove and quantity_to_remove < current_qty:
+                                        order_item["quantity"] -= quantity_to_remove
+                                        reduced = True
+                                        print(f"Reduced {removed_item_name}: {current_qty} → {order_item['quantity']}")
+                                        response_content = f"Reduced {removed_item_name} by {quantity_to_remove}. You now have {order_item['quantity']} {removed_item_name} in your order."
+                                    else:
+                                        # Remove entire item
+                                        self.current_order.pop(i)
+                                        removed = True
+                                        print(f"Removed entire item: {current_qty}x {removed_item_name}")
+                                        if quantity_to_remove and quantity_to_remove >= current_qty:
+                                            response_content = f"Removed all {current_qty} {removed_item_name} from your order."
+                                        else:
+                                            response_content = f"Removed {removed_item_name} from your order."
+                                    break
+                            
+                            if not removed and not reduced:
+                                response_content = f"I couldn't find that item in your current order."
+                                print(f"Item not found in order: {item_id}")
+                            
+                            print("Current order after removal:", json.dumps(self.current_order))
+                            
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=response_content,
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+                            
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error removing item from order: {str(e)}",
                                 content_complete=True,
                                 end_call=False,
                             )
