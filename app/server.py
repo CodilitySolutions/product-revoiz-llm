@@ -106,14 +106,38 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
 
         # Send first message to signal ready of server
         response_id = 0
+        question_speak = None
+        response_task = None
+        turntaking = "agent_turn"  # default to agent_turn
         first_event = llm_client.draft_begin_message()
         await websocket.send_json(first_event.__dict__)
+        
+        async def stream_agent_response(request):
+            async for event in llm_client.draft_response(request):
+                        await websocket.send_json(event.__dict__)
+                        if request.response_id < response_id:
+                            break  # new response needed, abandon this one
+
+        async def delayed_response(request ,question_speak):
+            try:
+                if question_speak:
+                    print("⏳ Starting 3 second delay before agent response...")
+                    await asyncio.sleep(2)
+                    print("Ending 5 second delay before agen not response...")
+                    await stream_agent_response(request)
+                else:
+                    await stream_agent_response(request)
+            except asyncio.CancelledError:
+                        print("🚫 Delayed response task was cancelled.")
 
         async def handle_message(request_json):
             nonlocal response_id
+            nonlocal question_speak
+            nonlocal response_task
+            nonlocal turntaking
 
             try:
-                print(json.dumps(request_json, indent=2))
+                # print(json.dumps(request_json, indent=2))
                 # There are 5 types of interaction_type: call_details, pingpong, update_only, response_required, and reminder_required.
                 # Not all of them need to be handled, only response_required and reminder_required.
                 if request_json["interaction_type"] == "call_details":
@@ -128,6 +152,19 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
                     )
                     return
                 if request_json["interaction_type"] == "update_only":
+                    turntaking = request_json.get("turntaking", turntaking)
+                    # print("turntaking------>", turntaking)
+                    if turntaking == "user_turn" :
+                        # print("User is speaking------>",response_task)
+                        question_speak = True
+                        if response_task is not None:
+                            # print("Cancelling response task------>")
+                            response_task.cancel()
+                            response_task = None
+                    else: 
+                        # print("Agent is speaking---->")
+                        question_speak = False
+                        
                     return
                 if (
                     request_json["interaction_type"] == "response_required"
@@ -143,10 +180,8 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
                         f"""Received interaction_type={request_json['interaction_type']}, response_id={response_id}, last_transcript={request_json['transcript'][-1]['content']}"""
                     )
 
-                    async for event in llm_client.draft_response(request):
-                        await websocket.send_json(event.__dict__)
-                        if request.response_id < response_id:
-                            break  # new response needed, abandon this one
+                    # Start the delay+response task
+                response_task = asyncio.create_task(delayed_response(request,question_speak))
             except Exception as e:
                 print(f"Error handling message: {str(e)}")
                 # Try to send an error response to the client
