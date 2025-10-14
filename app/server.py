@@ -108,6 +108,7 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
         response_id = 0
         question_speak = None
         response_task = None
+        combined_message=""
         turntaking = "agent_turn"  # default to agent_turn
         first_event = llm_client.draft_begin_message()
         await websocket.send_json(first_event.__dict__)
@@ -119,12 +120,14 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
                             break  # new response needed, abandon this one
 
         async def delayed_response(request ,question_speak):
+            nonlocal combined_message
             try:
                 if question_speak:
                     print("⏳ Starting 3 second delay before agent response...")
                     await asyncio.sleep(2)
                     print("Ending 5 second delay before agen not response...")
                     await stream_agent_response(request)
+                    combined_message=""
                 else:
                     await stream_agent_response(request)
             except asyncio.CancelledError:
@@ -135,6 +138,7 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
             nonlocal question_speak
             nonlocal response_task
             nonlocal turntaking
+            nonlocal combined_message
 
             try:
                 # print(json.dumps(request_json, indent=2))
@@ -176,6 +180,13 @@ async def websocket_handler(websocket: WebSocket, call_id: str):
                         response_id=response_id,
                         transcript=request_json["transcript"],
                     )
+                    if question_speak:
+                        combined_message += " "+request_json['transcript'][-1]['content']
+                        print("    ")
+                        print("Combined - Message : ",combined_message)
+                        print("----------------------------------------------------------------------")
+                        print("    ")
+                        request_json['transcript'][-1]['content'] = combined_message
                     print(
                         f"""Received interaction_type={request_json['interaction_type']}, response_id={response_id}, last_transcript={request_json['transcript'][-1]['content']}"""
                     )

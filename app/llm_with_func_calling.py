@@ -64,54 +64,145 @@ ending_sentence = os.environ["ENDING_SENTENCE"]
 print('Ending Sentence: ', ending_sentence)
 order_instructions = os.environ["ORDER_INSTRUCTIONS"]
 print('Order Instructions: ', order_instructions)
+
 agent_prompt = f"""
-You are a friendly restaurant order assistant. Your job is to help customers place their orders efficiently and accurately.
+You are a friendly and intelligent **restaurant order assistant**.
+Your job is to help customers place, modify, and manage their food orders accurately using function calls.
 
-You should:
-- Be knowledgeable about the menu and able to answer questions about menu items
-- Help customers make their selections
-- Handle special requests and dietary restrictions whenever possible
+---
 
-**Important Context**
+## 🧠 Core Behavior Rules
+
+1. **Always detect and act on all order-related intents** in a single user message — even if the user mixes them.
+   - Example: “Remove 3 lava cakes, add 5 Pepsi bottles, and replace wings with kickers.”
+     → You must call all three functions:
+       - `remove_from_order(item_id="Lava Cake", quantity=3)`
+       - `add_to_order(item_id="Pepsi Bottle", quantity=5)`
+       - `remove_from_order(item_id="Chicken Wings")`
+       - `add_to_order(item_id="Chicken Kickers", quantity=1)`
+   - Never skip any function call when user intent is clear.
+
+2. **Always call functions for each distinct item or action.**
+   - Even if the user writes all actions in one sentence.
+
+3. **Ignore invalid or unknown menu items** but continue processing valid ones.
+   - Example: “Add 3 burgers and 2 chicken kickers.” → Only `add_to_order("Chicken Kickers", 2)` if burger is unavailable.
+
+---
+
+## ⚙️ Function Calling Rules
+
+| Intent Type | Example Phrases | Function | Parameters |
+|--------------|----------------|-----------|-------------|
+| **Add** | "I want", "Please add", "Give me", "Include", "I’d like", "Add" | `add_to_order` | `item_id`, `quantity`, optional `special_instructions` |
+| **Replace** | "Change to", "Replace with", "Make it", "Modify to" | `add_to_order(replace=true)` | `item_id`, `quantity` |
+| **Remove** | "Remove", "Delete", "Cancel", "Take out", "I don't want", "Exclude" | `remove_from_order` | `item_id`, optional `quantity` |
+
+🟢 If quantity is mentioned (e.g., "remove 3 Pepsi"), include it.  
+🔴 If not mentioned (e.g., "remove the pizza"), remove the entire item.
+
+---
+
+## 💡 Multi-Intent Examples
+
+### Example 1 – Mixed Add + Remove
+User:  
+> “Remove 2 Chicken Wings and add 3 Lava Cakes.”  
+✅ Function calls:
+
+---
+
+### Example 2 – Replace + Add
+User:  
+> “Replace the lava cake with 2 Pepsi bottles.”  
+✅ Function calls:
+
+---
+
+### Example 3 – Add + Remove + Replace (Full Combo)
+User:  
+> “Remove 3 Lava Cakes, add 5 Pepsi bottles, and replace Chicken Wings with Chicken Kickers.”  
+✅ Function calls:
+
+---
+
+### Example 4 – Deduplication
+User:  
+> “Add 3 single dips and 3 single dips.”  
+✅ Deduplicate →  
+
+---
+
+### Example 5 – Replace Quantity
+User:  
+> “I ordered 2 Pepsi bottles earlier, change it to 5.”  
+✅ Function call:
+
+---
+
+## 🧩 Smart Deduplication & Validation
+
+- Combine repeated items in one message.
+- Keep the latest mentioned quantity.
+- Ignore words like “only”, “just”, “please” — focus on actionable verbs (add, remove, replace, change, modify).
+- Match every item to the `MENU`.  
+  Ignore keys like `gst_info` or metadata.
+- For invalid items, respond politely:  
+  > “Sorry, 'Burger' isn’t available, but I’ve added your Chicken Kicker.”
+
+---
+
+**Multiple Action Handling**
+
+When a user message contains multiple actions (like adding, removing, and replacing items together),
+you must detect and execute ALL relevant function calls accordingly.
+
+Each action should trigger its corresponding function:
+- `add_to_order()` for adding items.
+- `remove_from_order()` for removing items.
+- `replace_from_order()` (or `add_to_order(replace=true)`) for replacement updates.
+
+Do not skip or merge these actions — process them **independently**.
+
+After all function calls are executed for a single user message,
+you must combine the results into **one single summarized response** for the user.
+
+For example:
+
+User: “Uh, basically, I want to modify our order, basically. So you added six for four and also remove choco bread and replace the lava cake with showstoppper.”
+
+Expected Function Calls:
+1. `add_to_order(item_id="for_four", quantity=6)`
+2. `remove_from_order(item_id="choco_bread")`
+3. `replace_from_order(old_item="lava_cake", new_item="showstopper")`
+
+Expected Combined Response:
+
+----
+## 💬 Conversational Guidelines
+
+- Respond **after** function calls have executed.
+- Confirm all changes in a natural way:
+  > “Got it! Removed 3 Lava Cakes and added 5 Pepsi Bottles to your order.”
+- Always confirm the updated order list before saving.
+- Before finishing:
+  1. Ask for customer name.
+  2. Ask for payment method.
+  3. Call `save_order()` before saying goodbye.
+- End with this exact sentence: **{ending_sentence}**
+
+---
+
+## 🗓️ Context
 - **Order Instructions**: {order_instructions}
-- **Menu**: {json.dumps(MENU)}
-- **Language**: Conduct the entire session in **{agent_language}** — both your questions and the customer's responses should be in this language. Do not use any other language.
-- **Payment Methods**: Accepted payment types are Cash, Credit/Debit Card, and Online transfer.
-- **Thank You and Conclusion**:
-  - Conclude the interaction by thanking the customer for their time and insights.
-  - Clearly state this exact sentence as your final response: **{ending_sentence}**
-- **Saving the Order**: Before saying the final sentence, always call the function `save_order()` to save the order.
+- **Menu:** {json.dumps(MENU)}
+- **Language:** {agent_language}
+- **Payment Options:** Cash, Card, Online Transfer
+- **Today:** {datetime.date.today().strftime('%A, %B %d, %Y')}
 
-**Your Tasks**
-1. Greet the customer warmly and help them navigate the menu.
-2. Take the order accurately, including any special requests or dietary modifications.
-3. **When confirming the order, ask for the customer's name and preferred payment method**.
-4. Confirm the full order with the customer before ending the conversation.
-5. Answer questions about menu items, ingredients, or preparation methods.
-6. Maintain a friendly, helpful, and professional tone throughout.
-7. Make sure to **repeat the order at least once** and ask for confirmation.
-8. Always save the order before concluding the conversation.
-9. If the customer mentions multiple items in one message, issue multiple `add_to_order` function calls—one per item—before responding.
-10. **Use the `replace` parameter when customers want exact quantities (e.g., "I only need 3 burgers", "change it to 2 pizzas", "make it 5 biryanis") instead of adding to existing quantities.**
-11. **Use `remove_from_order` when customers want to reduce or remove items (e.g., "remove 5 Pepsi" reduces by 5, "remove the salad" deletes it completely). Include the quantity parameter when the customer specifies a number to remove.**
-12. **IMPORTANT: Only use `add_to_order` when customers mention specific menu items to order. Do NOT use it when they provide personal information (name, address, payment method) or ask general questions.**
-
-**Order Modification Guidelines**
-- **Adding items**: Use `add_to_order` without the `replace` parameter (e.g., "add 2 burgers" adds 2 more)
-- **Replacing quantity**: Use `add_to_order` with `replace=true` (e.g., "change it to 5 burgers" sets quantity to exactly 5)
-- **Removing specific quantity**: Use `remove_from_order` with quantity (e.g., "remove 5 Pepsi" reduces Pepsi by 5)
-- **Removing entire item**: Use `remove_from_order` without quantity (e.g., "remove the pizza" deletes it completely)
-
-**Conversational Style**
-- Be friendly and welcoming, but professional.
-- Use clear and concise language when describing menu items.
-- Be patient and helpful when customers need assistance or more information.
-- Confirm all details politely and clearly before finalizing the order.
-- Handle special requests with care and a positive attitude.
-- Never pronounce or spell out asterisks (*) in the customer’s name.
-
-Today's date is: **{datetime.date.today().strftime('%A, %B %d, %Y')}**
+---
 """
+
 
 print('agent_prompt: ', agent_prompt)
 
@@ -212,20 +303,46 @@ class LlmClient:
         return re.sub(r"[^a-z0-9]", "", (text or "").lower())
 
     def _find_menu_item(self, identifier: str):
-        # Try exact id match first
-        for category in MENU.values():
-            if identifier in category:
-                return identifier, category[identifier]
+        try:
+            if not isinstance(identifier, str):
+                identifier = str(identifier or "")
+            if not identifier.strip():
+                return None, None
 
-        # Fallback to normalized matching on id and item name
-        norm_identifier = self._normalize_identifier(identifier)
-        for category in MENU.values():
-            for item_key, item in category.items():
-                if self._normalize_identifier(item_key) == norm_identifier:
-                    return item_key, item
-                if self._normalize_identifier(item.get("name", "")) == norm_identifier:
-                    return item_key, item
-        return None, None
+            # Try exact id match first
+            for category in MENU.values():
+                # 🧹 Ignore gst_info or invalid categories
+                if not isinstance(category, dict) or all(isinstance(v, (int, float)) for v in category.values()):
+                    continue
+
+                if identifier in category:
+                    item = category[identifier]
+                    if isinstance(item, dict) and "name" in item:
+                        return identifier, item
+
+            # Normalize identifier for fuzzy search
+            norm_identifier = self._normalize_identifier(identifier)
+
+            for category in MENU.values():
+                # 🧹 Again ignore gst_info dicts
+                if not isinstance(category, dict) or all(isinstance(v, (int, float)) for v in category.values()):
+                    continue
+
+                for item_key, item in category.items():
+                    if not isinstance(item, dict) or "name" not in item:
+                        continue
+
+                    if self._normalize_identifier(item_key) == norm_identifier:
+                        return item_key, item
+                    if self._normalize_identifier(item.get("name", "")) == norm_identifier:
+                        return item_key, item
+
+            return None, None
+
+        except Exception as e:
+            print("🔥 Error in _find_menu_item:", str(e))
+            return None, None
+
 
     def convert_transcript_to_openai_messages(self, transcript: List[Utterance]):
         messages = []
@@ -433,12 +550,14 @@ class LlmClient:
             
             # Use retry logic for the API call
             stream = await self._make_api_call_with_retry(
-                self.client.chat.completions.create,
-                model="gpt-3.5-turbo",
-                messages=prompt,
-                stream=True,
-                tools=self.prepare_functions(),
-            )
+            self.client.chat.completions.create,
+            model="gpt-4o",
+            messages=prompt,
+            stream=True,
+            tools=self.prepare_functions(),
+            tool_choice="auto",  # or "required" to force function calls
+            temperature=0.2,
+        )
 
             async for chunk in stream:
                 if len(chunk.choices) == 0:
@@ -556,20 +675,20 @@ class LlmClient:
                                 for tc_id in tool_calls_order
                                 if tool_call_map[tc_id].get("func_name") == "add_to_order"
                             ]
-
                             added_items = []
 
                             for tc_data in add_calls:
                                 try:
                                     args = json.loads(tc_data.get("arguments", "{}"))
+                                    if not isinstance(args, dict):
+                                        args = {}
                                 except Exception:
-                                    continue
+                                    args = {}
 
                                 item_id = args.get("item_id")
                                 quantity_raw = args.get("quantity", 1)
                                 special_instructions = args.get("special_instructions", "")
                                 replace = args.get("replace", False)
-
                                 # Normalize quantity
                                 try:
                                     quantity = int(float(str(quantity_raw).strip()))
