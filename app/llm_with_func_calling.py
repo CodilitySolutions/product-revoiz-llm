@@ -193,11 +193,11 @@ Expected Combined Response:
 ---
 
 ## 🗣️ **Conversational Flow After Order Summary**
+After added/remove/replace items, always show the order summary by calling `show_order_summary()`.
 it should be run explicicty in this format
 After showing an order summary:
 - **Never stay silent.**
-- The assistant must **proactively** continue by saying something like:
-
+- The assistant must **proactively** continue by saying something like in this format: strictly
 > Would you like to confirm your order?  
 > Based on your payment choice, here are your totals:
 > - Cash ({cash_gst_value}% GST): --- total value with cash  
@@ -243,17 +243,15 @@ Once the user confirms, proceed to:
 
 ---
 
-## 💾 Order Saving & Auto Session Closure (with Delay)
+## 💾 Order Saving & Auto Session Closure.
 
 - When the `save_order()` function is successfully executed and returns any confirmation like:
   > "Order saved successfully!"  
   > "Your order has been placed!"  
   > or any other success message,
 
-  then you **must automatically wait for about 2 seconds**, and after that delay, **call the `end_call()` function** to finalize the session.
+  → you must immediately call the end_call() function to close the current session.
 
-- ⚙️ **Rules for end_call()**
-  - Only call `end_call()` after a successful order save confirmation.
 
 ---
 
@@ -960,7 +958,7 @@ class LlmClient:
                             if self.save_order_announced:
                                 # Avoid repeating announcements
                                 continue
-                            self.customer_name = func_call["arguments"]["customer_name"]                      
+                            self.customer_name = func_call["arguments"]["customer_name"]
                             self.payment_method = func_call["arguments"].get("payment_method")
 
                             # --- If payment method is not set, ask user which one they want ---
@@ -1028,10 +1026,11 @@ class LlmClient:
 
                             response = ResponseResponse(
                                 response_id=request.response_id,
-                                content=func_call["arguments"]["message"],
+                                content=func_call["arguments"]["message"] +" "+ ending_sentence,
                                 content_complete=False,
-                                end_call=False,
-                            )                   
+                                end_call=True,
+                            )
+                           
                             response.content = strip_markdown(response.content)
                             yield response
                             self.save_order_announced = True
