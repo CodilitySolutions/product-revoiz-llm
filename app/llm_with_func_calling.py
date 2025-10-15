@@ -56,7 +56,8 @@ print('Agent Language: ', agent_language)
 #     }
 # }
 MENU = json.loads(os.environ["MENU_LISTING"])
-print('Menu: ', MENU)
+cash_gst_value = MENU.get("gst_info", {}).get("cash_gst", 0)
+card_gst_value = MENU.get("gst_info", {}).get("card_gst", 0)
 
 begin_sentence = os.environ["BEGIN_SENTENCE"]
 print('Begin Sentence: ', begin_sentence)
@@ -64,6 +65,9 @@ ending_sentence = os.environ["ENDING_SENTENCE"]
 print('Ending Sentence: ', ending_sentence)
 order_instructions = os.environ["ORDER_INSTRUCTIONS"]
 print('Order Instructions: ', order_instructions)
+MENU = json.loads(os.environ["MENU_LISTING"])
+print("Menu:", MENU)
+
 
 agent_prompt = f"""
 You are a friendly and intelligent **restaurant order assistant**.
@@ -185,23 +189,87 @@ Expected Combined Response:
 - Confirm all changes in a natural way:
   > “Got it! Removed 3 Lava Cakes and added 5 Pepsi Bottles to your order.”
 - Always confirm the updated order list before saving.
-- Before finishing:
-  1. Ask for customer name.
-  2. Ask for payment method.
-  3. Call `save_order()` before saying goodbye.
-- End with this exact sentence: **{ending_sentence}**
 
 ---
 
+## 🗣️ **Conversational Flow After Order Summary**
+it should be run explicicty in this format
+After showing an order summary:
+- **Never stay silent.**
+- The assistant must **proactively** continue by saying something like:
+
+> Would you like to confirm your order?  
+> Based on your payment choice, here are your totals:
+> - Cash ({cash_gst_value}% GST): --- total value with cash  
+> - Card ({card_gst_value}% GST): --- total value with card
+> Which option would you like?
+
+Once the user confirms, proceed to:
+- Call `save_order()` with subtotal, total_with_gst, payment_method.
+- Then call `end_call()` to finalize and trigger backend save.
+
+---
+
+## 🧠 Smart Behavior
+
+- If the user doesn’t specify a payment method even after being asked:
+  - Default to **Cash**, but clearly state:
+    > Since you didn’t specify, I’ve set your payment method to Cash by default.
+
+- If the user says something like *“Yeah, that’s fine”* or *“Okay go ahead”*, treat that as **confirmation to save the order**.
+
+- **Payment Confirmation Before Saving**:
+  - Before calling `save_order()`, if no payment method has been chosen, you must inform the customer about both totals:
+    - “If you pay by **card**, your total (including GST) will be X.”
+    - “If you pay by **cash**, your total (including GST) will be Y.”
+    - Then ask: “Which payment method would you like to use?”
+  - If the user later changes the payment method (e.g., says “Actually I’ll pay by card”), update it and confirm the new total accordingly.
+  - Always send the final order with both:
+    - `subtotal` (without GST)
+    - `total_with_gst` (final with GST applied)
+  - End with this exact sentence: **{ending_sentence}**
+  - After saving the order, call `end_call()` to finalize and trigger the backend save.
+
+---
+
+- **Important Rule for Order Saving:**
+  - If the user explicitly says *“Save my order”* but **has not yet provided** a payment method **or** customer name,  
+    ➤ **Do not actually save the order yet.**  
+    Instead, politely ask for the missing details before proceeding.  
+    Example:  
+    > “Sure! Before saving your order, could you please confirm your name and preferred payment method (cash, card, or online transfer)?”
+
+  - Once both details are confirmed, proceed to call `save_order()` as usual.
+
+---
+
+## 💾 Order Saving & Auto Session Closure (with Delay)
+
+- When the `save_order()` function is successfully executed and returns any confirmation like:
+  > "Order saved successfully!"  
+  > "Your order has been placed!"  
+  > or any other success message,
+
+  then you **must automatically wait for about 2 seconds**, and after that delay, **call the `end_call()` function** to finalize the session.
+
+- ⚙️ **Rules for end_call()**
+  - Only call `end_call()` after a successful order save confirmation.
+
+---
+
+  
 ## 🗓️ Context
-- **Order Instructions**: {order_instructions}
 - **Menu:** {json.dumps(MENU)}
 - **Language:** {agent_language}
-- **Payment Options:** Cash, Card, Online Transfer
+- **Payment Options:** Cash, Card.
 - **Today:** {datetime.date.today().strftime('%A, %B %d, %Y')}
 
 ---
 """
+
+
+
+
 
 
 print('agent_prompt: ', agent_prompt)
@@ -224,9 +292,13 @@ def strip_markdown(text):
 class LlmClient:
     call_id: str
     current_order: List
+    finalize_order_json_data: Dict
     customer_name: str
     delivery_address: str
     payment_method: str
+    gst_percentage: float
+    gst_amount: float
+    total_with_gst: float
     def __init__(self):
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
@@ -237,6 +309,9 @@ class LlmClient:
             organization=os.getenv("OPENAI_ORGANIZATION_ID"),  # Optional
         )
         self.current_order = []  # Track the current order
+        self.gst_amount = 0.0
+        self.gst_percentage = 0.0
+        self.total_with_gst = 0.0
         self.customer_name = "Anonymous"
         self.delivery_address = ""
         self.payment_method = ""
@@ -273,7 +348,7 @@ class LlmClient:
         if backend_api_url and self.call_id and order_details:
             post_url = f"{backend_api_url}/api/get-order-item/{self.call_id}/"
             try:
-                print("Order details to POST:", json.dumps(order_details, indent=2))
+                print("Order detailsed  to POST:", json.dumps(order_details, indent=2))
                 async with httpx.AsyncClient() as client:
                     post_response = await client.post(post_url, json=order_details)
                     print("Order POST response:", post_response.status_code, post_response.text)
@@ -294,6 +369,9 @@ class LlmClient:
             "payment_method": getattr(self, "payment_method", ""),
             "items": self.current_order,
             "total": sum(item["price"] * item["quantity"] for item in self.current_order),
+            "gst_percentage": getattr(self, "gst_percentage", "0"),
+            "gst_amount": getattr(self, "gst_amount", "0"),
+            "total_with_gst": getattr(self, "total_with_gst", "0"),
             "order_time": datetime.datetime.now().isoformat(),
         }
         return order_details
@@ -565,6 +643,9 @@ class LlmClient:
 
                 if chunk.choices[0].delta.tool_calls:
                     for tc in chunk.choices[0].delta.tool_calls:
+                        # ✅ After all function calls have been processed
+                        
+
                         tc_id = getattr(tc, "id", None)
                         tc_fn = getattr(tc, "function", None)
                         tc_name = getattr(tc_fn, "name", "") if tc_fn else ""
@@ -585,6 +666,7 @@ class LlmClient:
                                 tool_call_map[target_tc_id] = {"func_name": tc_name or "", "arguments": ""}
                                 tool_calls_order.append(target_tc_id)
                             tool_call_map[target_tc_id]["arguments"] += tc_args_part
+                    print("tool call map : ",tool_call_map)
 
                 if chunk.choices[0].delta.content:
                     response = ResponseResponse(
@@ -599,7 +681,7 @@ class LlmClient:
             if tool_calls_order:
                 # Track which function types we've already processed to avoid duplicates
                 processed_add_to_order = False
-                
+                combined_messages = []  
                 for tc_id in tool_calls_order:
                     func_call = {
                         "func_name": tool_call_map[tc_id].get("func_name", ""),
@@ -746,14 +828,9 @@ class LlmClient:
                             print("Current order after add:", json.dumps(self.current_order))
 
                             # Send a single final combined response
-                            response = ResponseResponse(
-                                response_id=request.response_id,
-                                content=combined_message,
-                                content_complete=True,
-                                end_call=False,
-                            )
-                            response.content = strip_markdown(response.content)
-                            yield response
+                            # ✅ Instead of yielding, just collect the message
+                            combined_messages.append(combined_message)
+
 
                         except Exception as e:
                             response = ResponseResponse(
@@ -821,14 +898,7 @@ class LlmClient:
                             
                             print("Current order after removal:", json.dumps(self.current_order))
                             
-                            response = ResponseResponse(
-                                response_id=request.response_id,
-                                content=response_content,
-                                content_complete=True,
-                                end_call=False,
-                            )
-                            response.content = strip_markdown(response.content)
-                            yield response
+                            combined_messages.append(response_content)
                             
                         except Exception as e:
                             response = ResponseResponse(
@@ -847,13 +917,14 @@ class LlmClient:
                                 summary = "Your order is currently empty."
                             else:
                                 total = sum(item["price"] * item["quantity"] for item in self.current_order)
-                                summary = "Here's your current order:\n"
+                                summary = "\n"
                                 for item in self.current_order:
                                     if item['quantity'] > 1:
                                         summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f} each)\n"
                                     else:
                                         summary += f"- {item['quantity']} {item['name']} ({item['price']:.2f})\n"
-                                summary += f"\nTotal: {total:.2f}"
+                                summary += f"\nTotal: {total:.2f} \n"
+                                summary += "Would you like me to proceed with your order? \n"
 
                             response = ResponseResponse(
                                 response_id=request.response_id,
@@ -889,39 +960,81 @@ class LlmClient:
                             if self.save_order_announced:
                                 # Avoid repeating announcements
                                 continue
-                            self.customer_name = func_call["arguments"]["customer_name"]
-                            self.delivery_address = func_call["arguments"].get("delivery_address", "")
-                            self.payment_method = func_call["arguments"]["payment_method"]                        
-                        # order_details = {
-                        #     "customer_name": func_call["arguments"]["customer_name"],
-                        #     "delivery_address": func_call["arguments"].get("delivery_address", ""),
-                        #     "payment_method": func_call["arguments"]["payment_method"],
-                        #     "items": self.current_order,
-                        #     "total": sum(item["price"] * item["quantity"] for item in self.current_order),
-                        #     "order_time": datetime.datetime.now().isoformat()
-                        # }
-                        # print("Saving order:", json.dumps(order_details, indent=2))
+                            self.customer_name = func_call["arguments"]["customer_name"]                      
+                            self.payment_method = func_call["arguments"].get("payment_method")
 
-                        # Post order to backend
-                        # await self.saveOrder(backend_api_url, order_details)
+                            # --- If payment method is not set, ask user which one they want ---
+                            if not getattr(self, "payment_method", None):
+                                subtotal = sum(float(item["price"]) * int(item["quantity"]) for item in self.current_order)
+
+                                gst_data = MENU.get("gst_info", {})
+                                card_gst = gst_data.get("card_gst", 0)
+                                cash_gst = gst_data.get("cash_gst", 0)
+
+                                total_card = subtotal + (subtotal * card_gst / 100)
+                                total_cash = subtotal + (subtotal * cash_gst / 100)
+
+                                payment_question = (
+                                    f"Before we save your order, please select a payment method.\n\n"
+                                    f"If you pay by **Card**, total (with {card_gst}% GST) will be: **{total_card:.2f}**.\n"
+                                    f"If you pay by **Cash**, total (with {cash_gst}% GST) will be: **{total_cash:.2f}**.\n\n"
+                                    "Which payment method would you like to choose?"
+                                )
+
+                                response = ResponseResponse(
+                                    response_id=request.response_id,
+                                    content=payment_question,
+                                    content_complete=True,
+                                    end_call=False,
+                                )
+                                response.content = strip_markdown(response.content)
+                                yield response
+                                continue  # wait for user’s next reply to set payment_method
+
+                            # --- Compute subtotal, GST, and total ---
+                            subtotal = sum(float(item["price"]) * int(item["quantity"]) for item in self.current_order)
+                            gst_data = MENU.get("gst_info", {})
+
+                            pm_source = (self.payment_method or "").lower()
+                            is_card = any(k in pm_source for k in ("card", "debit", "credit"))
+                            is_cash = "cash" in pm_source
+
+                            if is_card:
+                                self.gst_percentage = gst_data.get("card_gst", {})
+                            elif is_cash:
+                                self.gst_percentage = gst_data.get("cash_gst", {})
+
+                            if self.gst_percentage:
+                                self.gst_amount = subtotal * (self.gst_percentage / 100.0)
+                            self.total_with_gst = subtotal + self.gst_amount
+
+                            # --- Save order details ---
+                            order_details = {
+                                "customer_name": self.customer_name,
+                                "delivery_address": self.delivery_address,
+                                "payment_method": self.payment_method,
+                                "items": self.current_order,
+                                "subtotal": subtotal,
+                                "gst_percentage": self.gst_percentage,
+                                "gst_amount": self.gst_amount,
+                                "total": self.total_with_gst,
+                                "order_time": datetime.datetime.now().isoformat()
+                            }
+                            self.finalize_order_json_data = order_details
+
+
+                            # Post order to backend
+                            # await self.saveOrder(backend_api_url, order_details)
+
                             response = ResponseResponse(
                                 response_id=request.response_id,
                                 content=func_call["arguments"]["message"],
                                 content_complete=False,
                                 end_call=False,
-                            )
+                            )                   
                             response.content = strip_markdown(response.content)
                             yield response
                             self.save_order_announced = True
-
-                        # response = ResponseResponse(
-                        #     response_id=request.response_id,
-                        #     content="Order saved successfully! Thank you for your order.",
-                        #     content_complete=True,
-                        #     end_call=False,
-                        # )
-                        # response.content = strip_markdown(response.content)
-                        # yield response
                         except Exception as e:
                             response = ResponseResponse(
                                 response_id=request.response_id,
@@ -932,6 +1045,46 @@ class LlmClient:
                             response.content = strip_markdown(response.content)
                             yield response
 
+                    elif func_call["func_name"] == "end_call":
+                        print('func_name=end_call')
+                        try:
+                            # Post order to backend once
+                            if not self.order_saved:
+                                await self.saveOrder(backend_api_url, self.finalize_order_json_data)
+
+                        except Exception as e:
+                            response = ResponseResponse(
+                                response_id=request.response_id,
+                                content=f"Error saving order: {str(e)}",
+                                content_complete=True,
+                                end_call=False,
+                            )
+                            response.content = strip_markdown(response.content)
+                            yield response
+
+                        ending_message = func_call["arguments"]["message"]
+                        response = ResponseResponse(
+                            response_id=request.response_id,
+                            content=ending_message,
+                            content_complete=True,
+                            end_call=True,
+                        )
+                        response.content = strip_markdown(response.content)
+                        yield response
+
+                        # Final goodbye
+                        # response = ResponseResponse(
+                        #     response_id=request.response_id,
+                        #     content=ending_sentence,
+                        #     content_complete=True,
+                        #     end_call=True,
+                        # )
+                        response.content = strip_markdown(response.content)
+                        yield response
+
+                    
+                    
+                    
                     elif func_call["func_name"] == "cancel_order":
                         print('func_name=cancel_order')
                         try:
@@ -953,46 +1106,6 @@ class LlmClient:
                             )
                             response.content = strip_markdown(response.content)
                             yield response
-
-                    elif func_call["func_name"] == "end_call":
-                        print('func_name=end_call')
-                        try:
-                            self.customer_name = func_call["arguments"]["customer_name"]
-                            self.delivery_address = func_call["arguments"].get("delivery_address", "")
-                            self.payment_method = func_call["arguments"]["payment_method"]
-                            order_details = {
-                                "customer_name": func_call["arguments"]["customer_name"],
-                                "delivery_address": func_call["arguments"].get("delivery_address", ""),
-                                "payment_method": func_call["arguments"]["payment_method"],
-                                "items": self.current_order,
-                                "total": sum(item["price"] * item["quantity"] for item in self.current_order),
-                                "order_time": datetime.datetime.now().isoformat()
-                            }
-                            print("Saving order:", json.dumps(order_details, indent=2))
-
-                            # Post order to backend once
-                            if not self.order_saved:
-                                await self.saveOrder(backend_api_url, order_details)
-                        except Exception as e:
-                            response = ResponseResponse(
-                                response_id=request.response_id,
-                                content=f"Error saving order: {str(e)}",
-                                content_complete=True,
-                                end_call=False,
-                            )
-                            response.content = strip_markdown(response.content)
-                            yield response
-
-                        ending_message = func_call["arguments"]["message"]
-                        # First send the ending message
-                        response = ResponseResponse(
-                            response_id=request.response_id,
-                            content=ending_message,
-                            content_complete=True,
-                            end_call=False,
-                        )
-                        response.content = strip_markdown(response.content)
-                        yield response
                     
                     # Then send a final goodbye message and end the call
                     # response = ResponseResponse(
@@ -1001,8 +1114,25 @@ class LlmClient:
                     #     content_complete=True,
                     #     end_call=True,
                     # )
+                if combined_messages:
+                    # Join nicely with commas and "and"
+                    print("Combined Messages: ", combined_messages)
+                    if len(combined_messages) == 1:
+                        final_msg = combined_messages[0]
+                    else:
+                        final_msg = ", ".join(combined_messages[:-1]) + f" and {combined_messages[-1]}"
+                    response = ResponseResponse(
+                        response_id=request.response_id,
+                        content=f"{final_msg}",
+                        content_complete=True,
+                        end_call=False,
+                    )
                     response.content = strip_markdown(response.content)
                     yield response
+                
+
+                    # ✅ After all function calls have been processed
+                    
             else:
                 print('NO FUNC_CALL DETETCTED =================', response.content)
                 response = ResponseResponse(
